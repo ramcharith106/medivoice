@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en" data-size="1">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediVoice – Medication Label Reader</title>
+  <meta name="description" content="MediVoice reads medicine labels out loud. Take a photo of a medicine pack and hear the name, strength, instructions and expiry date." />
+  <meta name="theme-color" content="#0b3d6e" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b3d6e'/%3E%3Cpath d='M18 26h8l10-8v28l-10-8h-8z' fill='%23fff'/%3E%3Cpath d='M42 24a10 10 0 0 1 0 16' stroke='%23ffd400' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <!-- Tesseract.js v5: OCR that runs fully in the browser (no API key). -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" defer></script>
+  <!-- Apply saved text size / theme before first paint to avoid a flash. -->
+  <script>
+    try {
+      var s = JSON.parse(localStorage.getItem('medivoice.settings.v1') || '{}') || {};
+      if (s.size) document.documentElement.dataset.size = s.size;
+      var dark = s.theme ? s.theme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    } catch (e) { document.documentElement.dataset.theme = 'light'; }
+  </script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <!-- Screen-reader announcements ("Reading label… 60%", "Done") -->
+  <div id="live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <rect width="64" height="64" rx="14" />
+          <path d="M18 26h8l10-8v28l-10-8h-8z" fill="#fff" />
+          <path d="M42 24a10 10 0 0 1 0 16" stroke="#ffd400" stroke-width="4" fill="none" stroke-linecap="round" />
+        </svg>
+        <div>
+          <h1>MediVoice</h1>
+          <p class="tagline">Take a photo of your medicine. I will read the label out loud.</p>
+        </div>
+      </div>
+
+      <div class="display-settings" role="group" aria-label="Display settings">
+        <div class="size-toggle" role="group" aria-label="Text size">
+          <button type="button" class="btn btn-small size-btn" data-size="1" aria-pressed="true" aria-label="A: normal text size">A</button>
+          <button type="button" class="btn btn-small size-btn" data-size="2" aria-pressed="false" aria-label="A+: large text size">A+</button>
+          <button type="button" class="btn btn-small size-btn" data-size="3" aria-pressed="false" aria-label="A++: extra large text size">A++</button>
+        </div>
+        <button type="button" id="theme-btn" class="btn btn-small" aria-pressed="false" aria-label="Dark mode (high contrast)">
+          <span aria-hidden="true">◐</span> Dark mode
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="wrap" tabindex="-1">
+
+    <!-- ========== STEP 1: CAPTURE ========== -->
+    <section id="step-capture" class="step" aria-labelledby="h-capture">
+      <h2 id="h-capture"><span class="step-num" aria-hidden="true">1</span> Take or choose a photo</h2>
+      <p class="hint">Use good light. Fill the photo with the label. Hold the phone still.</p>
+
+      <div class="capture-buttons">
+        <button type="button" id="camera-btn" class="btn btn-primary btn-big" aria-label="Take photo of a medicine label with your camera">
+          <span aria-hidden="true">📷</span> Take Photo
+        </button>
+        <button type="button" id="upload-btn" class="btn btn-secondary btn-big" aria-label="Upload Image of a medicine label from this device">
+          <span aria-hidden="true">🖼️</span> Upload Image
+        </button>
+        <button type="button" id="sample-btn" class="btn btn-ghost btn-big" aria-label="Try Sample Label (no camera needed)">
+          <span aria-hidden="true">🧪</span> Try Sample Label
+        </button>
+      </div>
+      <!-- Hidden file inputs, opened by the buttons above -->
+      <input id="camera-input" type="file" accept="image/*" capture="environment" hidden />
+      <input id="upload-input" type="file" accept="image/*" hidden />
+
+      <div id="dropzone" class="dropzone" tabindex="0" role="button"
+           aria-label="Drop a label picture here, or press Enter to choose a file">
+        <span aria-hidden="true">⬇️</span> Or drag and drop a picture here
+      </div>
+
+      <!-- Preview + rotate + read -->
+      <div id="preview-area" class="preview-area" hidden>
+        <figure class="preview">
+          <canvas id="preview-canvas" role="img" aria-label="Preview of your label picture"></canvas>
+          <figcaption>Is the writing the right way up? If not, turn it.</figcaption>
+        </figure>
+        <div class="rotate-row">
+          <button type="button" id="rotate-left" class="btn btn-secondary" aria-label="Turn left (rotate picture)">
+            <span aria-hidden="true">↺</span> Turn left
+          </button>
+          <button type="button" id="rotate-right" class="btn btn-secondary" aria-label="Turn right (rotate picture)">
+            <span aria-hidden="true">↻</span> Turn right
+          </button>
+        </div>
+        <label class="check-row">
+          <input type="checkbox" id="enhance-check" checked />
+          <span>Clean up the picture before reading (recommended)</span>
+        </label>
+        <button type="button" id="read-btn" class="btn btn-primary btn-big btn-wide" aria-label="Read Label now">
+          <span aria-hidden="true">🔍</span> Read Label
+        </button>
+      </div>
+    </section>
+
+    <!-- ========== STEP 2: PROGRESS ========== -->
+    <section id="step-progress" class="step" aria-labelledby="h-progress" hidden>
+      <h2 id="h-progress" tabindex="-1"><span class="step-num" aria-hidden="true">2</span> Reading the label…</h2>
+      <p id="progress-label" class="progress-label">Getting the reader ready</p>
+      <div class="progress-row">
+        <progress id="progress-bar" max="100" value="0" aria-labelledby="progress-label"></progress>
+        <span id="progress-pct" class="progress-pct" aria-hidden="true">0%</span>
+      </div>
+      <p class="hint">The first time can take up to a minute while the reader downloads. Everything stays on your device.</p>
+    </section>
+
+    <!-- ========== STEP 3: RESULTS ========== -->
+    <section id="step-results" class="step" aria-labelledby="h-results" hidden>
+      <h2 id="h-results" tabindex="-1"><span class="step-num" aria-hidden="true">3</span> What the label says</h2>
+
+      <div class="pharmacist-banner" role="note">
+        <span class="banner-icon" aria-hidden="true">⚕️</span>
+        <p><strong>Always confirm with your pharmacist.</strong> This app can make mistakes when reading labels.</p>
+      </div>
+
+      <!-- Shown when no text could be read -->
+      <div id="error-box" class="error-box" role="alert" hidden>
+        <p id="error-text"></p>
+        <ul class="tips">
+          <li>Turn on more light, or move near a window.</li>
+          <li>Hold the camera steady.</li>
+          <li>Fill the photo with the label.</li>
+          <li>Try the "Turn" buttons if the writing is sideways.</li>
+        </ul>
+        <button type="button" id="retry-btn" class="btn btn-primary btn-big">Try another photo</button>
+      </div>
+
+      <div id="result-body">
+        <p id="summary" class="summary"></p>
+
+        <div class="legend" aria-label="What the colours mean">
+          <span class="badge badge-clear"><span aria-hidden="true">✔</span> Clear</span> easy to read
+          <span class="badge badge-check"><span aria-hidden="true">!</span> Check</span> please look again
+          <span class="badge badge-unsure"><span aria-hidden="true">?</span> Unsure</span> could be wrong
+        </div>
+
+        <div id="cards" class="cards"></div>
+
+        <label class="check-row confirm-row">
+          <input type="checkbox" id="confirm-check" />
+          <span>Mark as confirmed by pharmacist</span>
+        </label>
+
+        <!-- Speech settings (the play controls live in the speech bar below) -->
+        <div id="speech-settings" class="speech-settings">
+          <div class="field">
+            <label for="rate-slider">Reading speed: <output id="rate-out" for="rate-slider">0.9×</output></label>
+            <input type="range" id="rate-slider" min="0.6" max="1.5" step="0.1" value="0.9" />
+          </div>
+          <div class="field">
+            <label for="lang-select">Reading language</label>
+            <select id="lang-select">
+              <option value="en">English</option>
+              <option value="hi" lang="hi">हिन्दी (Hindi)</option>
+              <option value="te" lang="te">తెలుగు (Telugu)</option>
+            </select>
+            <p id="voice-note" class="small-note" hidden></p>
+          </div>
+        </div>
+        <p id="no-speech" class="notice" hidden>
+          Your browser cannot read aloud. Please try Chrome, Edge or Safari, or ask someone to read the details above.
+        </p>
+
+        <details class="raw">
+          <summary>Show all text found on the label</summary>
+          <p class="small-note">Words with a <mark class="w-low">yellow</mark> background may be wrong. Words with a <mark class="w-bad">red</mark> background are very unclear.</p>
+          <div id="raw-text" class="raw-text"></div>
+          <figure id="processed-figure" class="processed" hidden>
+            <figcaption>The cleaned-up picture the reader used:</figcaption>
+            <div id="processed-holder"></div>
+          </figure>
+        </details>
+      </div>
+
+      <button type="button" id="new-scan-btn" class="btn btn-secondary btn-big btn-wide">
+        <span aria-hidden="true">➕</span> Read another label
+      </button>
+    </section>
+
+    <!-- ========== HISTORY ========== -->
+    <section id="history" class="step" aria-labelledby="h-history">
+      <h2 id="h-history">Recent labels</h2>
+      <p id="history-empty" class="hint">Labels you read will be listed here. They are saved only on this device.</p>
+      <ul id="history-list" class="history-list"></ul>
+      <button type="button" id="clear-history-btn" class="btn btn-ghost" hidden aria-label="Clear recent labels from this device">
+        Clear recent labels
+      </button>
+    </section>
+  </main>
+
+  <!-- Sticky bottom bar on phones (normal block on larger screens) -->
+  <div id="speech-bar" class="speech-bar" role="region" aria-label="Read aloud controls" hidden>
+    <div class="speech-bar-inner">
+      <button type="button" id="play-btn" class="btn btn-primary btn-big btn-read" aria-label="Read aloud">
+        <span aria-hidden="true">🔊</span> <span id="play-label">Read Aloud</span>
+      </button>
+      <button type="button" id="pause-btn" class="btn btn-secondary btn-icon" aria-label="Pause" disabled>
+        <span aria-hidden="true">⏸</span><span class="btn-text">Pause</span>
+      </button>
+      <button type="button" id="stop-btn" class="btn btn-secondary btn-icon" aria-label="Stop" disabled>
+        <span aria-hidden="true">⏹</span><span class="btn-text">Stop</span>
+      </button>
+      <button type="button" id="repeat-btn" class="btn btn-secondary btn-icon" aria-label="Repeat from the start">
+        <span aria-hidden="true">↻</span><span class="btn-text">Repeat</span>
+      </button>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p><strong>This is an assistive prototype, not medical advice.</strong>
+        Always check your medicine with a pharmacist or doctor.</p>
+      <p class="small-note">Pictures are read on your device and are never uploaded.</p>
+    </div>
+  </footer>
+</body>
+</html>
